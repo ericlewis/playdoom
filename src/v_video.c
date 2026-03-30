@@ -157,14 +157,14 @@ void V_DrawPatch(int x, int y, patch_t *patch)
             if (y >= 208) {
                 while (count--)
                 {
-                    uint8_t bit = (graymap[*source++] > 8) ? xmask : 0;
+                    uint8_t bit = (graymap[*source++] > 63) ? xmask : 0;
                     *dest = (*dest & ~xmask) | bit;
                     dest += SCREENSTRIDE;
                 }
             } else {
                 while (count--)
                 {
-                    uint8_t shade = shades[graymap[*source++]][(yoff++) & 3];
+                    uint8_t shade = shades[graymap[*source++]][(yoff++) & 31];
                     *dest = (*dest & ~xmask) | (shade & xmask);
                     dest += SCREENSTRIDE;
                 }
@@ -229,7 +229,7 @@ void V_DrawPatchFlipped(int x, int y, patch_t *patch)
 
             while (count--)
             {
-                uint8_t shade = shades[graymap[*source++]][(yoff++) & 3];
+                uint8_t shade = shades[graymap[*source++]][(yoff++) & 31];
                 *dest = (*dest & ~xmask) | (shade & xmask);
                 dest += SCREENSTRIDE;
             }
@@ -369,7 +369,7 @@ void V_StretchColumn(int x, int y, column_t *column) {
             pixel_t *destend = desttop + ((6*(desty+1))/5)*SCREENSTRIDE;
             uint8_t gray = graymap[*source++];
             do {
-                uint8_t shade = shades[gray][(yoff++) & 3];
+                uint8_t shade = shades[gray][(yoff++) & 31];
                 *dest = (*dest & ~xmask) | (shade & xmask);
                 dest += SCREENSTRIDE;
             } while (dest < destend);

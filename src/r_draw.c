@@ -144,7 +144,7 @@ HOT_FUNC void R_DrawColumn (void)
     // Direct path — R_DrawColumn is no longer used in gameplay
     // (both modes use R_DrawColumnLow) but kept for completeness.
     do {
-        *dest = (*dest & notmask) | (shades[gcm[src[(frac>>FRACBITS)&127]]][yoff & 3] & xmask);
+        *dest = (*dest & notmask) | (shades[gcm[src[(frac>>FRACBITS)&127]]][yoff & 31] & xmask);
         dest += SCREENSTRIDE; frac += fracstep; ++yoff;
     } while (count--);
     }
@@ -193,7 +193,7 @@ HOT_FUNC void R_DrawColumnLow (void)
     const uint8_t *gcm = gray_colormaps + (dc_colormap - colormaps);
     do
     {
-        uint8_t shade = shades[gcm[src[(frac>>FRACBITS)&127]]][yoff & 3];
+        uint8_t shade = shades[gcm[src[(frac>>FRACBITS)&127]]][yoff & 31];
         *dest = (*dest & ~xmask) | (shade & xmask);
 	dest += SCREENSTRIDE;
 	frac += fracstep;
@@ -406,7 +406,7 @@ HOT_FUNC void R_DrawTranslatedColumn (void)
     const uint8_t *gcm = gray_colormaps + (dc_colormap - colormaps);
     do
     {
-        uint8_t shade = shades[gcm[trans[src[frac>>FRACBITS]]]][yoff & 3];
+        uint8_t shade = shades[gcm[trans[src[frac>>FRACBITS]]]][yoff & 31];
         *dest = (*dest & ~xmask) | (shade & xmask);
 
 	dest += SCREENSTRIDE;
@@ -462,7 +462,7 @@ void R_DrawTranslatedColumnLow (void)
     const uint8_t *gcm = gray_colormaps + (dc_colormap - colormaps);
     do
     {
-        uint8_t shade = shades[gcm[trans[src[frac>>FRACBITS]]]][yoff & 3];
+        uint8_t shade = shades[gcm[trans[src[frac>>FRACBITS]]]][yoff & 31];
         *dest = (*dest & ~xmask) | (shade & xmask);
 	dest += SCREENSTRIDE;
 	frac += fracstep;
@@ -584,7 +584,7 @@ HOT_FUNC void R_DrawSpan (void)
     {
     const byte *src = ds_source;
     const uint8_t *gcm = gray_colormaps + (ds_colormap - colormaps);
-    const int yrow = ds_y & 3;
+    const int yrow = ds_y & 31;
 
     // Pre-compute dither LUT for first byte column.
     uint8_t dither[256];
@@ -679,7 +679,7 @@ HOT_FUNC void R_DrawSpanLow (void)
     {
     const byte *src = ds_source;
     const uint8_t *gcm = gray_colormaps + (ds_colormap - colormaps);
-    const int yrow = ds_y & 3;
+    const int yrow = ds_y & 31;
 
     do
     {

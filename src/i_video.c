@@ -91,40 +91,44 @@ void I_ReadScreen (pixel_t* scr)
 // which of the 17 shades of gray for each color?
 uint8_t graymap[256];
 
-// 16x16 Blue Noise threshold matrix (values 0-255).
-// Blue noise distributes thresholds more naturally than Bayer,
-// eliminating visible crosshatch patterns on 1-bit displays.
-// 4×4 Bayer threshold matrix (0-15). The correct match for DOOM's
-// pre-quantized palette — 16 thresholds for 17 apparent levels.
-// Smaller pattern = crisper crosshatch on the Playdate's sharp LCD.
-static const uint8_t bayer4x4[4][4] = {
-    { 0,  8,  2, 10},
-    {12,  4, 14,  6},
-    { 3, 11,  1,  9},
-    {15,  7, 13,  5},
+// 32×32 Bayer matrix (0-255). Tiles every 32px — much less visible than 4×4.
+static const uint8_t bayer32[32][8] = {
+    {  0,127, 31,159,  7,135, 39,167}, {191, 63,223, 95,199, 71,231,103},
+    { 47,175, 15,143, 55,183, 23,151}, {239,111,207, 79,247,119,215, 87},
+    { 11,139, 43,171,  3,131, 35,163}, {203, 75,235,107,195, 67,227, 99},
+    { 59,187, 27,155, 51,179, 19,147}, {251,123,219, 91,243,115,211, 83},
+    {  2,130, 34,162, 10,138, 42,170}, {194, 66,226, 98,202, 74,234,106},
+    { 50,178, 18,146, 58,186, 26,154}, {242,114,210, 82,250,122,218, 90},
+    { 14,142, 46,174,  6,134, 38,166}, {206, 78,238,110,198, 70,230,102},
+    { 62,190, 30,158, 54,182, 22,150}, {254,126,222, 94,246,118,214, 86},
+    {  0,128, 32,160,  8,136, 40,168}, {192, 64,224, 96,200, 72,232,104},
+    { 48,176, 16,144, 56,184, 24,152}, {240,112,208, 80,248,120,216, 88},
+    { 12,140, 44,172,  4,132, 36,164}, {204, 76,236,108,196, 68,228,100},
+    { 60,188, 28,156, 52,180, 20,148}, {252,124,220, 92,244,116,212, 84},
+    {  3,131, 35,163, 11,139, 43,171}, {195, 67,227, 99,203, 75,235,107},
+    { 51,179, 19,147, 59,187, 27,155}, {243,115,211, 83,251,123,219, 91},
+    { 15,143, 47,175,  7,135, 39,167}, {207, 79,239,111,199, 71,231,103},
+    { 63,191, 31,159, 55,183, 23,151}, {255,127,223, 95,247,119,215, 87},
 };
 
-// 17 shade levels × 4 rows = 68 bytes. Tiny, fits in one cache line pair.
-#define NUM_SHADE_LEVELS 17
-uint8_t shades[NUM_SHADE_LEVELS][4];
+// 256 levels × 32 rows = 8KB. Full range matches the 0-255 Bayer thresholds.
+// Every possible gray value gets its own unique pattern — no quantization banding.
+#define NUM_SHADE_LEVELS 128
+uint8_t shades[NUM_SHADE_LEVELS][32];
 
 static void I_InitDitherTables(void) {
-    for (int gray = 0; gray < NUM_SHADE_LEVELS; gray++) {
-        for (int row = 0; row < 4; row++) {
+    for (int gray = 0; gray < 128; gray++) {
+        int brightness = gray * 255 / 127;
+        for (int row = 0; row < 32; row++) {
             uint8_t pattern = 0;
-            for (int col = 0; col < 4; col++) {
-                // gray 0-16 compared to threshold 0-15.
-                // gray 0 = all black, gray 16 = all white.
-                if (gray > bayer4x4[row][col])
-                    pattern |= (0x88 >> col);  // repeat 4-bit pattern across byte
+            for (int col = 0; col < 8; col++) {
+                if (brightness > bayer32[row][col])
+                    pattern |= (0x80 >> col);
             }
             shades[gray][row] = pattern;
         }
     }
 }
-
-// Low-quality shades: 17 levels with blue noise dithering (16 rows).
-// (shades definition is above, near the top of file)
 
 
 //
@@ -143,16 +147,14 @@ void I_SetPalette (byte *doompalette)
         // Perceptual luminance (0.0 - 1.0)
         float lum = (red * 299 + green * 587 + blue * 114) / 255000.0f;
 
-        // Single nonlinear remap: compresses midtones, expands
-        // dark/bright separation. Then gain boost (DOOM is dark).
+        // Fully linear with slight gain. No curve — let DOOM's colormaps
+        // handle distance darkening. The 32×32 Bayer handles the rest.
         int l = (int)(lum * 255.0f);
-        l = (l * (l + 96)) >> 8;   // gentler nonlinear
-        l = (l * 3) >> 1;          // 1.5x gain — DOOM is very dark
+        l = (l * 9) >> 3;          // 1.125x gain
         if (l > 255) l = 255;
-        if (l < 16) l = 0;         // soft floor: kill shadow speckle
 
-        graymap[i] = (uint8_t)(l >> 4);  // 0-255 → 0-15
-        if (graymap[i] > 16) graymap[i] = 16;
+        graymap[i] = (uint8_t)(l >> 1);  // 0-255 → 0-127
+        if (graymap[i] > 127) graymap[i] = 127;
     }
 
     I_InitDitherTables();

@@ -34,8 +34,8 @@
 #define SCREENHEIGHT_4_3 240
 
 extern uint8_t graymap[256];
-#define NUM_SHADE_LEVELS 17
-extern uint8_t shades[NUM_SHADE_LEVELS][4];
+#define NUM_SHADE_LEVELS 128
+extern uint8_t shades[NUM_SHADE_LEVELS][32];
 
 extern uint8_t *gray_colormaps;
 
