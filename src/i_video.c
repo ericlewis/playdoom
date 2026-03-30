@@ -27,6 +27,8 @@
 #include "m_config.h"
 #include "m_misc.h"
 #include "tables.h"
+#include "r_main.h"
+#include "r_state.h"
 #include "v_video.h"
 #include "w_wad.h"
 #include "z_zone.h"
@@ -37,6 +39,9 @@
 
 // The screen buffer; this is modified to draw things to the screen
 pixel_t *I_VideoBuffer = NULL;
+
+// Pre-composed gray colormaps: gray_colormaps[colormap_offset + palette_index] = gray shade
+uint8_t *gray_colormaps = NULL;
 
 // Loaded font.
 static LCDFont *font = NULL;
@@ -71,10 +76,6 @@ void I_UpdateNoBlit (void)
 //
 void I_FinishUpdate (void)
 {
-    static int lasttic;
-    int tics;
-    int i;
-
     playdate->graphics->markUpdatedRows(0, LCD_ROWS - 1);
 }
 
@@ -90,28 +91,40 @@ void I_ReadScreen (pixel_t* scr)
 // which of the 17 shades of gray for each color?
 uint8_t graymap[256];
 
-// the shades themselves
-#define DitherPattern(a, b, c, d) { a * 17, b * 17, c * 17, d * 17 }
-
-const uint8_t shades[17][4] = {
-    DitherPattern(0x0, 0x0, 0x0, 0x0),
-    DitherPattern(0x8, 0x0, 0x0, 0x0),
-    DitherPattern(0x8, 0x0, 0x2, 0x0),
-    DitherPattern(0x8, 0x0, 0xa, 0x0),
-    DitherPattern(0xa, 0x0, 0xa, 0x0),
-    DitherPattern(0xa, 0x0, 0xa, 0x1),
-    DitherPattern(0xa, 0x4, 0xa, 0x1),
-    DitherPattern(0xa, 0x4, 0xa, 0x5),
-    DitherPattern(0xa, 0x5, 0xa, 0x5),
-    DitherPattern(0xd, 0x5, 0xa, 0x5),
-    DitherPattern(0xd, 0x5, 0xe, 0x5),
-    DitherPattern(0xd, 0x5, 0xf, 0x5),
-    DitherPattern(0xf, 0x5, 0xf, 0x5),
-    DitherPattern(0xf, 0x5, 0xf, 0xd),
-    DitherPattern(0xf, 0x7, 0xf, 0xd),
-    DitherPattern(0xf, 0x7, 0xf, 0xf),
-    DitherPattern(0xf, 0xf, 0xf, 0xf),
+// 16x16 Blue Noise threshold matrix (values 0-255).
+// Blue noise distributes thresholds more naturally than Bayer,
+// eliminating visible crosshatch patterns on 1-bit displays.
+// 4×4 Bayer threshold matrix (0-15). The correct match for DOOM's
+// pre-quantized palette — 16 thresholds for 17 apparent levels.
+// Smaller pattern = crisper crosshatch on the Playdate's sharp LCD.
+static const uint8_t bayer4x4[4][4] = {
+    { 0,  8,  2, 10},
+    {12,  4, 14,  6},
+    { 3, 11,  1,  9},
+    {15,  7, 13,  5},
 };
+
+// 17 shade levels × 4 rows = 68 bytes. Tiny, fits in one cache line pair.
+#define NUM_SHADE_LEVELS 17
+uint8_t shades[NUM_SHADE_LEVELS][4];
+
+static void I_InitDitherTables(void) {
+    for (int gray = 0; gray < NUM_SHADE_LEVELS; gray++) {
+        for (int row = 0; row < 4; row++) {
+            uint8_t pattern = 0;
+            for (int col = 0; col < 4; col++) {
+                // gray 0-16 compared to threshold 0-15.
+                // gray 0 = all black, gray 16 = all white.
+                if (gray > bayer4x4[row][col])
+                    pattern |= (0x88 >> col);  // repeat 4-bit pattern across byte
+            }
+            shades[gray][row] = pattern;
+        }
+    }
+}
+
+// Low-quality shades: 17 levels with blue noise dithering (16 rows).
+// (shades definition is above, near the top of file)
 
 
 //
@@ -120,13 +133,46 @@ const uint8_t shades[17][4] = {
 void I_SetPalette (byte *doompalette)
 {
     int i;
+    byte *pal = doompalette;
 
     for (i=0; i<256; ++i)
     {
-        uint8_t red = *doompalette++;
-        uint8_t green = *doompalette++;
-        uint8_t blue = *doompalette++;
-        graymap[i] = (red * 299 + green * 587 + blue * 114) / 15001;
+        uint8_t red = *pal++;
+        uint8_t green = *pal++;
+        uint8_t blue = *pal++;
+        // Perceptual luminance (0.0 - 1.0)
+        float lum = (red * 299 + green * 587 + blue * 114) / 255000.0f;
+
+        // Single nonlinear remap: compresses midtones, expands
+        // dark/bright separation. Then gain boost (DOOM is dark).
+        int l = (int)(lum * 255.0f);
+        l = (l * (l + 96)) >> 8;   // gentler nonlinear
+        l = (l * 3) >> 1;          // 1.5x gain — DOOM is very dark
+        if (l > 255) l = 255;
+        if (l < 16) l = 0;         // soft floor: kill shadow speckle
+
+        graymap[i] = (uint8_t)(l >> 4);  // 0-255 → 0-15
+        if (graymap[i] > 16) graymap[i] = 16;
+    }
+
+    I_InitDitherTables();
+    I_RebuildGrayColormaps();
+}
+
+void I_RebuildGrayColormaps(void)
+{
+    if (colormaps == NULL)
+        return;
+
+    // COLORMAP lump: 34 maps of 256 bytes each
+    int num_maps = 34;
+    int total = num_maps * 256;
+
+    if (gray_colormaps == NULL)
+        gray_colormaps = Z_Malloc(total, PU_STATIC, NULL);
+
+    for (int i = 0; i < total; i++) {
+        gray_colormaps[i] = graymap[colormaps[i]];
     }
 }
 
